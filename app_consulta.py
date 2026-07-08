@@ -35,7 +35,12 @@ def inicializar_base_conocimiento(ruta_db):
     if not os.path.exists(ruta_db):
         return None
     try:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        config_ligera = {"device": "cpu"}
+        
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            model_kwargs=config_ligera
+        )
         db = Chroma(persist_directory=ruta_db, embedding_function=embeddings)
         return db
     except Exception as e:
