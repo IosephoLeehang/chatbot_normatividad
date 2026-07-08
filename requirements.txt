@@ -8,4 +8,5 @@ chromadb
 sentence-transformers
 pymupdf
 PyMuPDF
+beautifulsoup4
 openai
