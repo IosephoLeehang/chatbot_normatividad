@@ -5,6 +5,7 @@ import streamlit as st
 import os
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 
 # ==========================================
 # CONFIGURACIÓN DE RUTAS (SITUACIÓN 1 Y 2)
@@ -75,28 +76,49 @@ else:
 
         # Búsqueda semántica en los vectores recopilados
         with st.chat_message("assistant"):
-            with st.spinner("Buscando en los documentos normativos..."):
-                # Recuperamos los 3 fragmentos de leyes más similares a la pregunta
-                documentos_relevantes = base_vectores.similarity_search(user_query, k=3)
+            with st.spinner("Analizando documentos normativos..."):
+                # 1. Recuperamos los fragmentos de la base de datos
+                documentos_relevantes = base_vectores.similarity_search(user_query, k=4)
                 
                 if documentos_relevantes:
                     contexto_encontrado = ""
                     fuentes = set()
                     
                     for doc in documentos_relevantes:
-                        contexto_encontrado += f"- {doc.page_content}\n\n"
-                        # Extraemos metadatos guardados en la Fase 1
+                        contexto_encontrado += f"[Fragmento]: {doc.page_content}\n\n"
                         doc_nombre = doc.metadata.get('documento', 'Norma Oficial')
                         doc_link = doc.metadata.get('enlace', '#')
                         fuentes.add(f"[{doc_nombre}]({doc_link})")
                     
-                    # --- NOTA PARA LA FASE 3 ---
-                    # Aquí enviaremos el 'contexto_encontrado' junto con la pregunta al LLM (Ej. OpenAI/Groq)
-                    # Por ahora, simulamos la respuesta mostrando los fragmentos puros recuperados
-                    respuesta_ia = f"**Información relevante encontrada en las normas:**\n\n{contexto_encontrado}"
-                    respuesta_ia += "\n\n**Fuentes oficiales detectadas:**\n" + "\n".join(fuentes)
-                else:
-                    respuesta_ia = "No logré encontrar fragmentos específicos en la base de datos que respondan exactamente a tu consulta."
+                    # 2. Inicializamos el LLM (Ej: Llama 3 con Groq)
+                    # Nota: Debes configurar tu ST_GROQ_API_KEY en los Secrets de Streamlit
+                    llm = ChatGroq(
+                        temperature=0.0, 
+                        model_name="llama3-8b-8192",
+                        groq_api_key=st.secrets["GROQ_API_KEY"]
+                    )
+                    
+                    # 3. Diseñamos la instrucción (Prompt) para obligar a redactar un resumen formal
+                    instruccion = f"""
+                    Eres un asistente legal experto en normatividad peruana del MIMP.
+                    Basándote estrictamente en los siguientes fragmentos obtenidos de la base de datos oficial, responde de forma clara, ordenada y directa a la pregunta del usuario. 
+                    Si la pregunta requiere un listado, estructúralo de forma limpia usando viñetas.
+                    No inventes datos que no estén explícitos en el contexto proporcionado.
 
-                st.markdown(respuesta_ia)
-                st.session_state.messages.append({"role": "assistant", "content": respuesta_ia})
+                    Contexto legal disponible:
+                    {contexto_encontrado}
+
+                    Pregunta del usuario: {user_query}
+                    Respuesta:
+                    """
+                    
+                    # 4. Generamos la respuesta redactada
+                    respuesta_final = llm.invoke(instruccion).content
+                    respuesta_final += "\n\n**Fuentes oficiales detectadas:**\n" + "\n".join(fuentes)
+                    
+                else:
+                    respuesta_final = "No logré encontrar fragmentos específicos en la base de datos que respondan a tu consulta."
+
+                st.markdown(respuesta_final)
+                st.session_state.messages.append({"role": "assistant", "content": respuesta_final})
+
