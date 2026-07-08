@@ -15,7 +15,9 @@ from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # 1. Configuración Inicial
-ARCHIVO_XLS = "C:\\Proyectos\\Minmuj\\Proy 005\\Informatico\\Pro aplicativo\\Tabulado normas.xlsx"
+# Solo para local
+# ARCHIVO_XLS = "C:\\Proyectos\\Minmuj\\Proy 005\\Informatico\\Pro aplicativo\\Tabulado normas.xlsx"
+ARCHIVO_XLS = "Tabulado normas.xlsx"
 DIRECTORIO_DB = "./chroma_db_normas" 
 
 HEADERS = {
