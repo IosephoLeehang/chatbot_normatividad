@@ -10,3 +10,4 @@ pymupdf
 PyMuPDF
 beautifulsoup4
 openai
+openpyxl
