@@ -1,58 +1,97 @@
-# código original de streamlit_app
+# Código para desarrollo de la fase 2
+# del proyecto de aplicativo de consulta sobre Normatividad
 
 import streamlit as st
-from openai import OpenAI
+import os
+from langchain_community.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
-# Show title and description.
-st.title("💬 Consultas sobre la normatividad")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# ==========================================
+# CONFIGURACIÓN DE RUTAS (SITUACIÓN 1 Y 2)
+# ==========================================
+# Nombre de la carpeta que generó la Fase 1
+NOMBRE_CARPETA_DB = "chroma_db_normas"
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
+# Verificamos si la app corre en Streamlit Cloud (Nube) o localmente
+if os.path.exists(NOMBRE_CARPETA_DB):
+    # Situación 1 o Situación 2 (Vectores subidos junto al código en GitHub)
+    RUTA_FINAL_DB = os.path.abspath(NOMBRE_CARPETA_DB)
 else:
+    # Fallback o configuración alternativa si usas rutas absolutas en tu laptop
+    RUTA_FINAL_DB = r"D:\Proyectos\git_porjects\chatbot_normatividad\chroma_db_normas"
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+# ==========================================
+# INTERFAZ DE USUARIO (STREAMLIT)
+# ==========================================
+st.set_page_config(page_title="Consulta de Normas - MIMP", page_icon="⚖️", layout="centered")
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
+st.title("⚖️ Asistente Normativo Inteligente")
+st.markdown("##### Haga consultas aquí sobre los documentos normativos publicados")
+st.caption("Conectado a la base de conocimiento oficializada del Observatorio.")
+
+# Carga optimizada de la Base de Datos para evitar recargas lentas (Cache)
+@st.cache_resource
+def inicializar_base_conocimiento(ruta_db):
+    if not os.path.exists(ruta_db):
+        return None
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        db = Chroma(persist_directory=ruta_db, embedding_function=embeddings)
+        return db
+    except Exception as e:
+        st.error(f"Error al inicializar la base de datos vectorial: {e}")
+        return None
+
+# Inicializar la base de datos
+base_vectores = inicializar_base_conocimiento(RUTA_FINAL_DB)
+
+if base_vectores is None:
+    st.error(f"❌ No se encontró la carpeta de conocimiento en: `{RUTA_FINAL_DB}`. Por favor, ejecuta primero la Fase 1.")
+else:
+    st.success("✅ Base de conocimiento cargada y lista para consultas.")
+
+    # Historial de chat en la sesión de Streamlit
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = [
+            {"role": "assistant", "content": "¡Hola! Soy tu asistente legal. ¿Qué norma o artículo específico del portal deseas consultar hoy?"}
+        ]
 
-    # Display the existing chat messages via `st.chat_message`.
+    # Mostrar mensajes anteriores del historial
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
-
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    # Entrada de texto del usuario
+    if user_query := st.chat_input("Ej. ¿Cuáles son las medidas de protección en la Ley 30364?"):
+        # Mostrar consulta del usuario en pantalla
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(user_query)
+        st.session_state.messages.append({"role": "user", "content": user_query})
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
-
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
+        # Búsqueda semántica en los vectores recopilados
         with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.spinner("Buscando en los documentos normativos..."):
+                # Recuperamos los 3 fragmentos de leyes más similares a la pregunta
+                documentos_relevantes = base_vectores.similarity_search(user_query, k=3)
+                
+                if documentos_relevantes:
+                    contexto_encontrado = ""
+                    fuentes = set()
+                    
+                    for doc in documentos_relevantes:
+                        contexto_encontrado += f"- {doc.page_content}\n\n"
+                        # Extraemos metadatos guardados en la Fase 1
+                        doc_nombre = doc.metadata.get('documento', 'Norma Oficial')
+                        doc_link = doc.metadata.get('enlace', '#')
+                        fuentes.add(f"[{doc_nombre}]({doc_link})")
+                    
+                    # --- NOTA PARA LA FASE 3 ---
+                    # Aquí enviaremos el 'contexto_encontrado' junto con la pregunta al LLM (Ej. OpenAI/Groq)
+                    # Por ahora, simulamos la respuesta mostrando los fragmentos puros recuperados
+                    respuesta_ia = f"**Información relevante encontrada en las normas:**\n\n{contexto_encontrado}"
+                    respuesta_ia += "\n\n**Fuentes oficiales detectadas:**\n" + "\n".join(fuentes)
+                else:
+                    respuesta_ia = "No logré encontrar fragmentos específicos en la base de datos que respondan exactamente a tu consulta."
+
+                st.markdown(respuesta_ia)
+                st.session_state.messages.append({"role": "assistant", "content": respuesta_ia})

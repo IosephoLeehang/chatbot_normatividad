@@ -11,3 +11,4 @@ PyMuPDF
 beautifulsoup4
 openai
 openpyxl
+torchvision
