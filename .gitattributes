@@ -1,3 +1,6 @@
 *.sqlite3 filter=lfs diff=lfs merge=lfs -text
 <<<<<<< HEAD
 chroma_db_normas/chroma.sqlite3 filter=lfs diff=lfs merge=lfs -text
+=======
+chroma_db_normas/chroma.sqlite3 filter=lfs diff=lfs merge=lfs -text
+>>>>>>> b500ee5bd65a2d3e5e1eba047b74854356e66127
