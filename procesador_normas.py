@@ -9,29 +9,42 @@ import fitz  # PyMuPDF
 from bs4 import BeautifulSoup
 import os
 import time
+import json
 from langchain_core.documents import Document 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # 1. Configuración Inicial
-# Solo para local
+# Solo para uso local
 # ARCHIVO_XLS = "C:\\Proyectos\\Minmuj\\Proy 005\\Informatico\\Pro aplicativo\\Tabulado normas.xlsx"
 ARCHIVO_XLS = "Tabulado normas.xlsx"
 DIRECTORIO_DB = "./chroma_db_normas" 
+ARCHIVO_CONTROL = "control_procesamiento.json"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 }
 
-# --- NUEVO: Configuración de la Sesión para evitar el error "Max retries exceeded" ---
+# 2. Configuración de la Sesión para evitar el error "Max retries exceeded"
+# --------------------------------------------------------------------------------------
 session = requests.Session()
-# Configuramos reintentos: Si falla, reintenta 3 veces. Espera 1s, luego 2s, luego 4s entre intentos.
+# Total reintentos 3, tiempos de espera cada 2 seg.
 retry = Retry(connect=3, read=3, backoff_factor=1, status_forcelist=[ 500, 502, 503, 504 ])
 adapter = HTTPAdapter(max_retries=retry)
 session.mount('http://', adapter)
 session.mount('https://', adapter)
 # --------------------------------------------------------------------------------------
+
+def cargar_control():
+    if os.path.exists(ARCHIVO_CONTROL):
+        with open(ARCHIVO_CONTROL, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def guardar_control(control_data):
+    with open(ARCHIVO_CONTROL, 'w', encoding='utf-8') as f:
+        json.dump(control_data, f, ensure_ascii=False, indent=4)
 
 def extraer_texto_de_pdf(contenido_binario):
     """Función de apoyo para leer el interior de un PDF"""
@@ -91,22 +104,35 @@ def extraer_texto_de_url(url):
 def procesar_excel_y_crear_bd():
     print("Iniciando Fase 1: Lectura masiva de documentos y textos directos...")
     
+    if not os.path.exists(ARCHIVO_XLS):
+        print(f"[!] No se encontró el archivo Excel: {ARCHIVO_XLS}")
+        return
+
     df = pd.read_excel(ARCHIVO_XLS)
-    documentos_procesados = []
-    
     df = df.dropna(subset=['Documento']) 
     total_filas = len(df)
     
+    control_historico = cargar_control()
+    documentos_nuevos = []
+    nuevo_control = {}
+
     for index, row in df.iterrows():
         enlace = row['Enlace']
         nombre_doc = str(row['Documento']) 
+        id_registro = str(enlace).strip() if pd.notna(enlace) and str(enlace).strip().startswith('http') else nombre_doc
         
+        # Almacén de la estructura actual para el control
+        nuevo_control[id_registro] = nombre_doc
+
+        # Condicional sin cambios (Mismo enlace/texto y ya existe la BD), siguiente fila
+        if id_registro in control_historico and os.path.exists(DIRECTORIO_DB):
+            continue
+
         texto_extraido = ""
-        
         if pd.notna(enlace) and str(enlace).strip().startswith('http'):
             print(f"[{index + 1}/{total_filas}] Descargando URL: {nombre_doc[:40]}...")
-            texto_extraido = extraer_texto_de_url(enlace)
-            time.sleep(2) # AUMENTAMOS A 2 SEGUNDOS DE PAUSA para no saturar al servidor
+            texto_extraido = extraer_texto_de_url(id_registro)
+            time.sleep(2)
         else:
             print(f"[{index + 1}/{total_filas}] Leyendo texto directo: {nombre_doc[:40]}...")
             texto_extraido = nombre_doc 
@@ -122,30 +148,34 @@ def procesar_excel_y_crear_bd():
                     "año": str(row.get('Año', 'N.D.'))
                 }
             )
-            documentos_procesados.append(doc)
-        else:
-            print(f"  [-] No se pudo obtener contenido útil de la fila {index + 1}")
+            documentos_nuevos.append(doc)
 
-    print(f"\n¡Extracción completada! Se procesaron {len(documentos_procesados)} registros exitosamente.")
-    
-    print("Dividiendo los textos en fragmentos para la Inteligencia Artificial...")
+    guardar_control(nuevo_control)    
+
+    if not documentos_nuevos:
+        print("\n😎 No se detectaron cambios ni enlaces nuevos. La base de datos está actualizada.")
+        return
+
+    print(f"\nSe procesarán {len(documentos_nuevos)} registros nuevos/modificados.")
+
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000, 
         chunk_overlap=200 
     )
-    fragmentos = text_splitter.split_documents(documentos_procesados)
+    fragmentos = text_splitter.split_documents(documentos_nuevos)
     
-    print(f"Creando la base de datos vectorial en '{DIRECTORIO_DB}'...")
+    print("Inicializando modelo de embeddings...")
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-    
+
+    print(f"Actualizando la base de datos vectorial en '{DIRECTORIO_DB}'...")
+
     vectorstore = Chroma.from_documents(
         documents=fragmentos, 
         embedding=embeddings, 
         persist_directory=DIRECTORIO_DB
     )
     
-    print("\n✅ ¡Fase 1 Completada con éxito!")
-    print(f"Tu base de datos está lista y guardada en la carpeta: {DIRECTORIO_DB}")
+    print("\n✅ ¡Fase 1 Completada con éxito y actualizada!")
 
 if __name__ == "__main__":
     procesar_excel_y_crear_bd()
