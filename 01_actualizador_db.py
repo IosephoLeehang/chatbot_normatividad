@@ -1,4 +1,6 @@
 # Actualizador de base de datos versión 1.0
+# La ejecución es local no se ejecuta en la nube
+# Para generar la BD y luego cargarla a la nube
 
 import os
 import json
@@ -150,8 +152,8 @@ def ejecutar_actualizacion():
         return
 
     print(f"\nSe encontraron {len(documentos_nuevos)} modificaciones/nuevos registros. Segmentando texto...")
-
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    # Ajuste de chunks: size anterior 1000 overlap 200. Se adiciona length_function para compatibilidad con versiones recientes de langchain
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150, length_function=len)
     fragmentos = text_splitter.split_documents(documentos_nuevos)
     
     print("Inicializando modelo de embeddings...")
