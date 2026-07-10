@@ -16,6 +16,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+import base64
 
 # Configuración de Archivos y Carpetas
 ARCHIVO_XLS = "Tabulado normas.xlsx"
@@ -53,44 +54,51 @@ def extraer_texto_de_pdf(contenido_binario):
         print(f"  [!] Error parseando PDF binario: {e}")
     return texto
 
-def extraer_texto_de_url(url):
-    from urllib.parse import urlparse
+import re
+
+def extraer_texto_de_url(url_o_ruta):
+    url_o_ruta = str(url_o_ruta).strip()
+    texto_extraido = ""
+    
     try:
-        response = session.get(url, headers=HEADERS, timeout=25) 
-        response.raise_for_status() 
-        content_type = response.headers.get('Content-Type', '').lower()
-        
-        if 'application/pdf' in content_type or url.lower().endswith('.pdf'):
-            return extraer_texto_de_pdf(response.content)
-            
-        else:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            enlaces = soup.find_all('a', href=True)
-            url_del_pdf = None
-            
-            for enlace in enlaces:
-                href = enlace['href']
-                if '.pdf' in href.lower():
-                    url_del_pdf = href
-                    if not url_del_pdf.startswith('http'):
-                        parsed_uri = urlparse(url)
-                        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
-                        url_del_pdf = base_url + url_del_pdf
-                    break 
-            
-            if url_del_pdf:
-                print(f"    -> Redirigiendo a PDF adjunto: {url_del_pdf[:60]}...")
-                pdf_response = session.get(url_del_pdf, headers=HEADERS, timeout=25)
-                pdf_response.raise_for_status()
-                return extraer_texto_de_pdf(pdf_response.content)
+        # --- CASO A: ES UN ARCHIVO LOCAL EN TU PC ---
+        if not url_o_ruta.startswith("http"):
+            if os.path.exists(url_o_ruta):
+                with fitz.open(url_o_ruta) as doc_pdf:
+                    for pagina in doc_pdf:
+                        texto_extraido += pagina.get_text() + "\n"
+                return texto_extraido
             else:
-                for script in soup(["script", "style"]):
-                    script.extract()
-                return soup.get_text(separator=' ', strip=True)
-                
+                print(f"  [!] Archivo local no encontrado en la ruta: {url_o_ruta}")
+                return ""
+
+        # --- CASO B: ES UN ENLACE DE GOOGLE DRIVE ---
+        if "drive.google.com" in url_o_ruta:
+            match = re.search(r'/d/([a-zA-Z0-9_-]+)', url_o_ruta)
+            if match:
+                file_id = match.group(1)
+                url_o_ruta = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+        # --- CASO C: EXTRACCIÓN WEB (Drive Directo o Páginas Normales) ---
+        response = session.get(url_o_ruta, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").lower()
+        
+        # Si es un PDF (como el de Google Drive) lo leemos en memoria
+        if "application/pdf" in content_type or "drive.google.com/uc" in url_o_ruta or url_o_ruta.lower().endswith('.pdf'):
+            with fitz.open(stream=response.content, filetype="pdf") as doc_pdf:
+                for pagina in doc_pdf:
+                    texto_extraido += pagina.get_text() + "\n"
+        else:
+            # Si es una web normal del gobierno
+            soup = BeautifulSoup(response.text, "html.parser")
+            texto_extraido = soup.get_text(separator="\n").strip()
+            
+        return texto_extraido
+
     except Exception as e:
-        print(f"  [!] Salto de URL por error de conexión o tiempo de espera en: {url}")
-        return None
+        print(f"  [!] Error crítico extrayendo texto de {url_o_ruta}: {e}")
+        return ""
 
 def ejecutar_actualizacion():
     print("🚀 Iniciando servicio de sincronización de Base de Datos Vectorial...")
@@ -108,51 +116,71 @@ def ejecutar_actualizacion():
     
     # 1. Identificar estrictamente cambios o nuevos registros
     for index, row in df.iterrows():
-        enlace = row['Enlace']
+        enlace = row.get('Enlace', '')
         nombre_doc = str(row['Documento']) 
+        enlace_str = str(enlace).strip() if pd.notna(enlace) else ""
         
-        # Identificador único basado en URL o Texto Directo
-        id_registro = str(enlace).strip() if pd.notna(enlace) and str(enlace).strip().startswith('http') else nombre_doc
+        id_registro = enlace_str if enlace_str else nombre_doc
         nuevo_control[id_registro] = nombre_doc
-
-        # Verificación inteligente: Si ya existe en control y la DB está creada, se omite
+        
+        # Verificación incremental
         if id_registro in control_historico and os.path.exists(DIRECTORIO_DB):
             continue
 
-        # Procesar descarga de datos
+        # Procesar extracción del texto
         texto_extraido = ""
-        if pd.notna(enlace) and str(enlace).strip().startswith('http'):
-            print(f"[{index + 1}/{total_filas}] Sincronizando URL: {nombre_doc[:50]}...")
-            texto_extraido = extraer_texto_de_url(id_registro)
-            time.sleep(1.5)  # Delay prudencial antipandemia de bloqueos IP
+        if enlace_str:
+            print(f"[{index + 1}/{total_filas}] Procesando Documento: {nombre_doc[:50]}...")
+            texto_extraido = extraer_texto_de_url(enlace_str)
+
+            # Adicional para verificar lo de la Ley 30364
+            # =============================================================================
+            #if "30364" in str(nombre_doc) or "30364" in str(enlace):
+            #    print(f"--- TEXTO LEIDO DE LA WEB --- \n{texto_extraido[:200]}\n-----------------------------")
+            # =============================================================================
+
+            time.sleep(1.5)
         else:
             print(f"[{index + 1}/{total_filas}] Registrando Texto Directo: {nombre_doc[:50]}...")
-            texto_extraido = nombre_doc 
 
-        if texto_extraido and len(texto_extraido.strip()) > 10: 
-            doc = Document(
-                page_content=texto_extraido,
-                metadata={
-                    "tema": str(row.get('Tema', 'N.D.')),
-                    "subtema": str(row.get('Subtema', 'N.D.')),
-                    "documento": nombre_doc[:70], 
-                    "enlace": str(enlace) if pd.notna(enlace) else "Texto directo",
-                    "año": str(row.get('Año', 'N.D.'))
-                }
+        # 2. Respaldo si la extracción falló o no hubo enlace
+        if not texto_extraido.strip():
+            texto_extraido = "Contenido referencial proveniente de la matriz."
+
+        # 3. TEXTO ENRIQUECIDO: Fusión de metadatos del Excel + PDF
+        texto_enriquecido = f"""
+        IDENTIFICADOR DE NORMA: {nombre_doc} | {nombre_doc}
+        AÑO DE PUBLICACIÓN OFICIAL: {row.get('Año', 'No especificado')}
+        TEMA PRINCIPAL: {row.get('Tema', 'No especificado')}
+        SUBTEMA: {row.get('Subtema', 'No especificado')}
+        
+        Contenido Íntegro de la Norma Legal:
+        {texto_extraido}
+        """            
+
+        # 4. Creación del documento   
+        doc = Document(
+              page_content=texto_enriquecido,
+              metadata={
+                  "tema": str(row.get('Tema', 'N.D.')),
+                  "subtema": str(row.get('Subtema', 'N.D.')),
+                  "documento": nombre_doc[:70], 
+                  "enlace": str(enlace) if pd.notna(enlace) else "Texto directo",
+                  "año de publicación": str(row.get('Año', 'N.D.'))
+                  }
             )
-            documentos_nuevos.append(doc)
+        documentos_nuevos.append(doc)
             
         # Liberación explícita de variables pesadas en memoria RAM
         del texto_extraido
         gc.collect()
 
     if not documentos_nuevos:
-        print("\n😎 Todo al día: No se detectaron modificaciones en el Excel. Base de datos sin cambios.")
+        print("\n😎 Todo al día: No se detectaron modificaciones en el Excel.")
         guardar_control(nuevo_control)
         return
 
-    print(f"\nSe encontraron {len(documentos_nuevos)} modificaciones/nuevos registros. Segmentando texto...")
-    # Ajuste de chunks: size anterior 1000 overlap 200. Se adiciona length_function para compatibilidad con versiones recientes de langchain
+    print(f"\nSe encontraron {len(documentos_nuevos)} nuevos registros. Segmentando texto...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150, length_function=len)
     fragmentos = text_splitter.split_documents(documentos_nuevos)
     
@@ -162,9 +190,7 @@ def ejecutar_actualizacion():
         model_kwargs={"device": "cpu"}
     )
 
-    print(f"Indexando de forma incremental en base de datos: '{DIRECTORIO_DB}'...")
-    
-    # Chroma.from_documents añade registros incrementalmente si la DB ya existe, no la destruye
+    print(f"Indexando en base de datos: '{DIRECTORIO_DB}'...")
     vectorstore = Chroma.from_documents(
         documents=fragmentos, 
         embedding=embeddings, 

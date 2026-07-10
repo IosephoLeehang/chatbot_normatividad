@@ -17,7 +17,7 @@ if os.path.exists(RUTA_DB):
     db = Chroma(persist_directory=RUTA_DB, embedding_function=embeddings)
     
     # 3. Texto de búsqueda para verificar
-    consulta = "Ley 30364 prevenir sancionar y erradicar la violencia contra las mujeres"
+    consulta = "¿En qué año se publicó la Ley 30364?"
     resultados = db.similarity_search(consulta, k=10)
     
     print(f"\n🔍 SE ENCONTRARON {len(resultados)} FRAGMENTOS RELEVANTES:\n")
