@@ -1,4 +1,4 @@
-#NAplicativo consulta versión 2.0
+#NAplicativo consulta versión 2.1
 
 import streamlit as st
 import os
@@ -9,11 +9,11 @@ from langchain_groq import ChatGroq
 # Configuración de rutas limpia
 RUTA_FINAL_DB = "./chroma_db_normas"
 
-st.set_page_config(page_title="Consulta de Normas - MIMP", page_icon="⚖️", layout="centered")
+st.set_page_config(page_title="Consulta de Normas - ON MIMP", page_icon="⚖️", layout="centered")
 
 st.title("⚖️ Asistente Normativo Inteligente")
 st.markdown("##### Consulta de documentos normativos publicados")
-st.caption("Conectado de forma eficiente a la base de conocimiento local indexada.")
+st.caption("Conectado a la sección Normatividad del Observatorio Nacional de la Violencia contra la Mujer e integrantes del grupo familiar")
 
 @st.cache_resource
 def inicializar_base_conocimiento(ruta_db):
@@ -40,7 +40,7 @@ if base_vectores is None:
 else:
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": "¡Hola! Soy tu asistente legal del MIMP. ¿Qué norma, ley o directiva deseas validar hoy?"}
+            {"role": "assistant", "content": "¡Hola! Soy tu asistente legal del Observatorio Nacional. ¿Qué norma, ley o directiva deseas validar hoy?"}
         ]
 
     for message in st.session_state.messages:
@@ -58,17 +58,16 @@ else:
                 
                 if documentos_relevantes:
                     contexto_encontrado = ""
-                    fuentes = set()
                     
-                    for doc in documentos_relevantes:
-                        contexto_encontrado += f"[Fragmento de Norma]: {doc.page_content}\n\n"
-                        doc_nombre = doc.metadata.get('documento', 'Norma Oficial')
+                    # NUEVO: Ahora pasamos el nombre y el enlace DENTRO del contexto para que la IA los use.
+                    for i, doc in enumerate(documentos_relevantes, 1):
+                        doc_nombre = doc.metadata.get('documento', f'Norma Oficial {i}')
                         doc_link = doc.metadata.get('enlace', '#')
                         
-                        if doc_link != "Texto directo":
-                            fuentes.add(f"• [{doc_nombre}]({doc_link})")
-                        else:
-                            fuentes.add(f"• {doc_nombre} *(Texto Directo)*")
+                        contexto_encontrado += f"--- Documento {i} ---\n"
+                        contexto_encontrado += f"Nombre de la Norma: {doc_nombre}\n"
+                        contexto_encontrado += f"Enlace: {doc_link}\n"
+                        contexto_encontrado += f"Fragmento: {doc.page_content}\n\n"
                     
                     llm = ChatGroq(
                         temperature=0.0, 
@@ -76,11 +75,19 @@ else:
                         groq_api_key=st.secrets["GROQ_API_KEY"]
                     )
                     
+                    # NUEVO: Instrucciones estrictas para forzar el formato deseado
                     instruccion = f"""
                     Eres un asistente legal experto en la normatividad del Ministerio de la Mujer y Poblaciones Vulnerables (MIMP) de Perú.
-                    Responde a la consulta usando exclusivamente los siguientes fragmentos verdaderos provistos. 
-                    Sé conciso, estructurado con viñetas claras y sumamente profesional.
-                    Si no está en el contexto, indica amablemente que la base de datos actual no cuenta con el texto exacto.
+                    Tu objetivo es responder a la consulta del usuario basándote EXCLUSIVAMENTE en el "Contexto Legal Registrado" provisto.
+
+                    REGLA DE FORMATO OBLIGATORIA:
+                    Por CADA norma o documento relevante que encuentres en el contexto, debes generar una viñeta utilizando ESTRICTAMENTE la siguiente estructura:
+                    **[Nombre de la Norma]**: [Texto descriptivo conciso basado en el fragmento] [([Enlace]({'{enlace}'}))]
+
+                    Ejemplo de cómo debe verse tu respuesta:
+                    **Ley N° 30364**: Norma matriz que crea el Observatorio para recolectar, sistematizar y monitorear datos sobre la violencia de género. [Ver documento](https://enlace_de_ejemplo.com)
+
+                    Si la información no está en el contexto, indica amablemente que la base de datos actual no cuenta con el texto exacto, sin inventar leyes ni enlaces.
 
                     Contexto Legal Registrado:
                     {contexto_encontrado}
@@ -90,7 +97,9 @@ else:
                     """
                     
                     respuesta_final = llm.invoke(instruccion).content
-                    respuesta_final += "\n\n**Fuentes oficiales aplicadas:**\n" + "\n".join(fuentes)
+                    
+                    # Nota: Ya no concatenamos las fuentes al final porque la IA está forzada a ponerlas en cada línea.
+                    
                 else:
                     respuesta_final = "No se encontraron registros indexados compatibles con los términos consultados."
 

@@ -1,6 +1,6 @@
-# Actualizador de base de datos versión 1.0
+# Actualizador de base de datos versión 2.0
 # La ejecución es local no se ejecuta en la nube
-# Para generar la BD y luego cargarla a la nube
+# Se genera la BD y luego se carga a la nube
 
 import os
 import json
@@ -16,7 +16,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-import base64
+import re
 
 # Configuración de Archivos y Carpetas
 ARCHIVO_XLS = "Tabulado normas.xlsx"
@@ -43,18 +43,6 @@ def cargar_control():
 def guardar_control(control_data):
     with open(ARCHIVO_CONTROL, 'w', encoding='utf-8') as f:
         json.dump(control_data, f, ensure_ascii=False, indent=4)
-
-def extraer_texto_de_pdf(contenido_binario):
-    texto = ""
-    try:
-        with fitz.open(stream=contenido_binario, filetype="pdf") as doc:
-            for pagina in doc:
-                texto += pagina.get_text() + "\n"
-    except Exception as e:
-        print(f"  [!] Error parseando PDF binario: {e}")
-    return texto
-
-import re
 
 def extraer_texto_de_url(url_o_ruta):
     url_o_ruta = str(url_o_ruta).strip()
@@ -107,6 +95,7 @@ def ejecutar_actualizacion():
         print(f"[!] Cancelado: No existe el archivo Excel '{ARCHIVO_XLS}'")
         return
 
+    # Se asegura de que la columna Documento exista y no esté vacía
     df = pd.read_excel(ARCHIVO_XLS).dropna(subset=['Documento'])
     total_filas = len(df)
     
@@ -132,13 +121,6 @@ def ejecutar_actualizacion():
         if enlace_str:
             print(f"[{index + 1}/{total_filas}] Procesando Documento: {nombre_doc[:50]}...")
             texto_extraido = extraer_texto_de_url(enlace_str)
-
-            # Adicional para verificar lo de la Ley 30364
-            # =============================================================================
-            #if "30364" in str(nombre_doc) or "30364" in str(enlace):
-            #    print(f"--- TEXTO LEIDO DE LA WEB --- \n{texto_extraido[:200]}\n-----------------------------")
-            # =============================================================================
-
             time.sleep(1.5)
         else:
             print(f"[{index + 1}/{total_filas}] Registrando Texto Directo: {nombre_doc[:50]}...")
@@ -147,9 +129,16 @@ def ejecutar_actualizacion():
         if not texto_extraido.strip():
             texto_extraido = "Contenido referencial proveniente de la matriz."
 
+        # Captura segura de la columna de referencia (por si está como RnlaceReferencial o EnlaceReferencial)
+        enlace_referencial = row.get('EnlaceReferencial', row.get('RnlaceReferencial', 'No especificado'))
+        nombre_documento_real = row.get('NombreDocumento', nombre_doc)
+
         # 3. TEXTO ENRIQUECIDO: Fusión de metadatos del Excel + PDF
+        # Se añaden las nuevas columnas para dar mejor contexto al modelo IA
         texto_enriquecido = f"""
-        IDENTIFICADOR DE NORMA: {nombre_doc} | {nombre_doc}
+        IDENTIFICADOR DE NORMA: {nombre_doc}
+        NOMBRE DEL DOCUMENTO: {nombre_documento_real}
+        TIPO DE DOCUMENTO: {row.get('TipoDoc', 'No especificado')}
         AÑO DE PUBLICACIÓN OFICIAL: {row.get('Año', 'No especificado')}
         TEMA PRINCIPAL: {row.get('Tema', 'No especificado')}
         SUBTEMA: {row.get('Subtema', 'No especificado')}
@@ -158,14 +147,17 @@ def ejecutar_actualizacion():
         {texto_extraido}
         """            
 
-        # 4. Creación del documento   
+        # 4. Creación del documento añadiendo la columna en la metadata   
         doc = Document(
               page_content=texto_enriquecido,
               metadata={
                   "tema": str(row.get('Tema', 'N.D.')),
                   "subtema": str(row.get('Subtema', 'N.D.')),
                   "documento": nombre_doc[:70], 
+                  "nombre_documento": str(nombre_documento_real),
+                  "tipo_doc": str(row.get('TipoDoc', 'N.D.')),
                   "enlace": str(enlace) if pd.notna(enlace) else "Texto directo",
+                  "enlace_referencial": str(enlace_referencial), # AQUÍ SE GUARDA LA NUEVA COLUMNA
                   "año de publicación": str(row.get('Año', 'N.D.'))
                   }
             )
@@ -202,3 +194,5 @@ def ejecutar_actualizacion():
 
 if __name__ == "__main__":
     ejecutar_actualizacion()
+
+
