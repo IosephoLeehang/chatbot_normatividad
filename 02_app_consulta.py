@@ -2,9 +2,16 @@
 
 import streamlit as st
 import os
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop['pysqlite3']
+import chromadb
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+
+# Versión de chromadb
+st.warning(f"🔍 Versión de ChromaDB en la nube: {chromadb.__version__}")
 
 # Configuración de rutas limpia
 RUTA_FINAL_DB = "./chroma_db_normas"
