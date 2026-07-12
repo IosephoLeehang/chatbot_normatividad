@@ -74,8 +74,12 @@ else:
                         doc_nombre = doc.metadata.get('documento', f'Norma Oficial {i}')
                         doc_link = doc.metadata.get('enlace', '#')
                         
+                        pagina_cruda = doc.metadata.get('page')
+                        doc_pagina = str(int(pagina_cruda) + 1) if pagina_cruda is not None else 'N/A'
+
                         contexto_encontrado += f"--- Documento {i} ---\n"
                         contexto_encontrado += f"Nombre de la Norma: {doc_nombre}\n"
+                        contexto_encontrado += f"Página: {doc_pagina}\n"
                         contexto_encontrado += f"Enlace: {doc_link}\n"
                         contexto_encontrado += f"Fragmento: {doc.page_content}\n\n"
                     
@@ -85,17 +89,17 @@ else:
                         groq_api_key=st.secrets["GROQ_API_KEY"]
                     )
                     
-                    # NUEVO: Instrucciones estrictas para forzar el formato deseado
+                    # NUEVO: Instrucciones estrictas para forzar el formato ubicando la página junto al enlace
                     instruccion = f"""
                     Eres un asistente legal experto en la normatividad del Ministerio de la Mujer y Poblaciones Vulnerables (MIMP) de Perú.
                     Tu objetivo es responder a la consulta del usuario basándote EXCLUSIVAMENTE en el "Contexto Legal Registrado" provisto.
 
                     REGLA DE FORMATO OBLIGATORIA:
                     Por CADA norma o documento relevante que encuentres en el contexto, debes generar una viñeta utilizando ESTRICTAMENTE la siguiente estructura:
-                    **[Nombre de la Norma]**: [Texto descriptivo conciso basado en el fragmento] [([Enlace]({'{enlace}'}))]
+                    **[Nombre de la Norma o Tema]**: [Texto descriptivo conciso basado en el fragmento] [([Ver documento - Pág. [Página]]({'{enlace}'}))]
 
                     Ejemplo de cómo debe verse tu respuesta:
-                    **Ley N° 30364**: Norma matriz que crea el Observatorio para recolectar, sistematizar y monitorear datos sobre la violencia de género. [Ver documento](https://enlace_de_ejemplo.com)
+                    **Ley N° 30364**: Norma matriz que crea el Observatorio para recolectar, sistematizar y monitorear datos sobre la violencia de género. [Ver documento - Pág. 14](https://enlace_de_ejemplo.com)
 
                     Si la información no está en el contexto, indica amablemente que la base de datos actual no cuenta con el texto exacto, sin inventar leyes ni enlaces.
 
