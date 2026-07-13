@@ -1,6 +1,16 @@
 #NAplicativo consulta versión 2.1
 
 import streamlit as st
+ocultar_elementos = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .viewerBadge_container__1QSob {display: none;}
+    </style>
+"""
+st.markdown(ocultar_elementos, unsafe_allow_html=True)
+
 import os
 import sys
 try:
